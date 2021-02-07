@@ -1,0 +1,616 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+	<style>
+		.square {
+			height: 50px;
+			width: 50px;
+			display: inline-block;
+			margin: 0px;
+			padding: 0px;
+			margin: -3px;
+		}
+
+		.black-square {
+			background-color: rgb(216 99 16);
+		}
+
+		.white-square {
+			background-color: rgb(255 186 146);
+		}
+
+		.piece {
+			position: absolute;
+		}
+	</style>
+</head>
+
+<body>
+	<script src="https://code.jquery.com/jquery-1.12.4.min.js"></script>
+	<script>
+		let cb = {
+			el: $("<div>").attr("id", "chessboard"),
+			pieceSelected: null,
+			squares: []
+		};
+		let turn = "w";
+		let piecesOnBoard = [];
+		function chessNotation(pieceType, square) {
+			let notationPiece = "";
+			switch (pieceType) {
+				case "w_pawn":
+				case "b_pawn":
+					break; // no name for pawn moves i.e e4 e5 and such, just square names
+				case "w_bishop":
+				case "b_bishop":
+					notationPiece = "B";
+					break;
+				case "w_rook":
+				case "b_rook":
+					notationPiece = "R";
+					break;
+				case "w_knight":
+				case "b_knight":
+					notationPiece = "N";
+					break;
+				case "w_king":
+				case "b_king":
+					notationPiece = "K";
+					break;
+				case "w_queen":
+				case "b_queen":
+					notationPiece = "Q";
+					break;
+			}
+			return notationPiece + square.name;
+		}
+		function pieceFromPosition(sqname) {
+			let possible = cb.squares.filter(v => v.name == sqname);
+			
+			let square = (possible == [] ? null : possible[0]);
+			if (square == null) return null;
+
+			let pieceEl = (square.el.children() == [] ? null : square.el.children()[0]);
+			if (pieceEl == null) return null;
+			
+			let piece = {
+				type: $(pieceEl).attr("class").split(" ").pop(),
+				el: $(pieceEl),
+				sq: square,
+			};
+			return piece;
+		}
+		function removeIllogicalSquares(squares) {
+			let logicalSquares = [];
+			let columns = "abcdefgh";
+			for (let i = 0; i < squares.length; i++) {
+				if (Number(squares[i].slice(1)) <= 0) {
+					continue;
+				}
+				if (Number(squares[i].slice(1)) > 8) {
+					continue;
+				}
+				if (!columns.includes(squares[i][0])) {
+					continue;
+				}
+				logicalSquares.push(squareFromPosition(squares[i]))
+			}
+			return logicalSquares;
+		}
+		function squareFromPosition(sqname) {
+			let possible = cb.squares.filter(v => v.name == sqname);
+			let square = (possible == [] ? null : possible[0]);
+			if (square == null) return null;
+			return square;
+		}
+		function checkIfFull(square) {
+			if (!square) {
+				return false;
+			}
+			return square.el.children().length != 0;
+		}
+		function canAttack(side) {
+			return function(square) {
+				let piece = pieceFromPosition(square.name);
+				return (piece? side != piece.type[0] : false);
+			}
+		}
+		function updatePiecePosition(piece, newSquare) {
+			let ref = piecesOnBoard.find(x => x.square.name == piece.square.name);
+			if (ref) {ref.square = newSquare};
+		}
+		function simulatePiecePosition(oldSquare, newSquare) {
+			let x = JSON.parse(JSON.stringify(piecesOnBoard));
+			let ref = x.find(v => v.square.name == oldSquare.name);
+			let occupant = x.find(v => v.square.name == newSquare.name);
+			if (ref) {
+				// simulate a capture
+				if (occupant) {
+					x = x.filter(v => v != occupant);
+				}
+				ref.square = newSquare;
+			} else {
+				console.log("[WARN] Didn't find ref (simulatePiecePosition). oldSquare:", oldSquare, "newSquare", newSquare, "x:", x)
+			}
+			return x;
+		}
+		function getSquaresForPiece(square, pieceType, deep=false) {
+			function pawnMoves(square) {
+				let side = pieceType[0];
+				let rows = [0, 1, 2, 3, 4, 5, 6, 7, 8];
+				let columns = "0abcdefgh";
+				let direction = side == "w" ? 1 : -1;
+				let openingMove = side == "w" ? 2 : 7;
+				let row = Number(square.name[1]) + direction;
+				let neighbors = [columns[columns.indexOf(square.name[0]) + 1] + row, columns[columns.indexOf(square.name[0]) - 1] + row]
+				let result = [];
+				if (row - direction == openingMove) {
+					result.push(squareFromPosition(square.name[0] + (row+direction)));
+				}
+				if (row <= rows.length) {
+					result.push(squareFromPosition(square.name[0] + row));
+				}
+				result.push(neighbors.
+					map(squareFromPosition).
+					filter(checkIfFull).
+					filter(canAttack(side)));
+				result = result.flat();
+				return result;
+			}
+			function rookMoves(square) {
+				function getDirectionVal(sq1) {
+					return function(sq2) {
+						let columns = "abcdefgh";
+						if (sq1.name[1] == sq2.name[1]) { // for h1: c1, b1, e1 and such
+							let val1 = columns.indexOf(sq1.name[0]);
+							let val2 = columns.indexOf(sq2.name[0]);
+							if (val1 > val2) { //
+								// sq1 is more right than sq2
+								return { direction: "left", val: val1 - val2, square: sq2};
+							} else if (val1 < val2) {
+								return { direction: "right", val: val2 - val1, square: sq2 };
+							}
+						}
+
+						if (sq1.name[0] == sq2.name[0]) { // for h1: h2, h3, h4 and such
+							let val1 = Number(sq1.name[1]);
+							let val2 = Number(sq2.name[1]);
+							if (val1 > val2) {
+								// sq1 is more above than sq2
+								return { direction: "down", val: val1 - val2, square: sq2};
+							} else if (val1 < val2) {
+								return { direction: "up", val: val2 - val1, square: sq2};
+							}
+						}
+					}
+				}
+				function freeSquaresFromDirections(directions) {
+					let sorter = ((a, b) => a.val - b.val);
+					let leftSquares = directions.filter(v => v.direction == "left");
+					let upSquares = directions.filter(v => v.direction == "up");
+					let downSquares = directions.filter(v => v.direction == "down");
+					let rightSquares = directions.filter(v => v.direction == "right");
+
+					leftSquares.sort(sorter);
+					upSquares.sort(sorter);
+					downSquares.sort(sorter);
+					rightSquares.sort(sorter);
+					
+					let freeSquares = [];
+					for (let i = 0; i < leftSquares.length; i++) {
+						if (checkIfFull(leftSquares[i].square)) {
+							if (canAttack(pieceType[0])(leftSquares[i].square)) {
+								freeSquares.push(leftSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(leftSquares[i]);
+					}
+					for (let i = 0; i < upSquares.length; i++) {
+						if (checkIfFull(upSquares[i].square)) {
+							if (canAttack(pieceType[0])(upSquares[i].square)) {
+								freeSquares.push(upSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(upSquares[i]);
+					}
+					for (let i = 0; i < downSquares.length; i++) {
+						if (checkIfFull(downSquares[i].square)) {
+							if (canAttack(pieceType[0])(downSquares[i].square)) {
+								freeSquares.push(downSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(downSquares[i]);
+					}
+					for (let i = 0; i < rightSquares.length; i++) {
+						if (checkIfFull(rightSquares[i].square)) {
+							if (canAttack(pieceType[0])(rightSquares[i].square)) {
+								freeSquares.push(rightSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(rightSquares[i]);
+					}
+					return freeSquares.map(v => v.square);
+				}
+				function getPossibleSquares(square) {
+					let possibleSquares = [];
+					for (let s = 0; s < cb.squares.length; s++) {
+						if (cb.squares[s].name == square.name) {
+							continue;
+						}
+						if (cb.squares[s].name[0] == square.name[0]) {
+							possibleSquares.push(cb.squares[s])
+						}
+						else if (cb.squares[s].name[1] == square.name[1]) {
+							possibleSquares.push(cb.squares[s])
+						}
+					}
+					return possibleSquares;
+				}
+				let possibles = getPossibleSquares(square);
+				return freeSquaresFromDirections(possibles.map(getDirectionVal(square)));
+			}
+			function bishopMoves(square) {
+				function getPossibleSquares(square) {
+					
+					let columns = "abcdefgh".split("");
+					let columnsByVal = columns.map(x => [x, columns.indexOf(x) - columns.indexOf(square.name[0])]);
+					let possibleSquares = columnsByVal.
+						map(v => [v[0] + (Number(square.name[1]) + v[1]), v[0] + (Number(square.name[1]) - v[1])]).
+						flat().
+						filter(v => v != square.name);
+					// a bishop on c4 can move to
+					// a2: -2 -2,
+					// a6: -2 +2,
+					// b3: -1 -1,
+					// b5: -1 +1,
+					// d3: +1 -1,
+					// d5: +1 +1,
+					// e2: +2 -2, 
+					// e6: +2 +2,
+					// f7: +3 +3,
+					// f1: +3 -3,
+					// g8 +4 +4
+					return removeIllogicalSquares(possibleSquares);
+				}
+				function getSquareDirection(sq1) {
+					return function(sq2) {
+						let columns = "abcdefgh";
+						let dir = "";
+						let valX = 0;
+						let valY = 0;
+						let val1 = columns.indexOf(sq1.name[0]);
+						let val2 = columns.indexOf(sq2.name[0]);
+
+						let val3 = Number(sq1.name[1]);
+						let val4 = Number(sq2.name[1]);
+						if (val3 > val4) { dir += "bottom";valY = val3 - val4; }
+						else if (val3 < val4) { dir += "top"; valY = val4 - val3; }
+						if (val1 > val2) { dir += "left"; valX = val1 - val2; }
+						else if (val1 < val2) { dir += "right"; valX = val2 - val1; }
+						
+						return {direction: dir, x: valX, y: valY, square: sq2};
+					}
+				}
+				function freeSquaresFromDirections(directions) {
+					let sorter = ((a, b) => (a.x - b.x) + (a.y - b.y));
+					let topLeftSquares = directions.filter(v => v.direction == "topleft");
+					let topRightSquares = directions.filter(v => v.direction == "topright");
+					let bottomLeftSquares = directions.filter(v => v.direction == "bottomleft");
+					let bottomRightSquares = directions.filter(v => v.direction == "bottomright");
+					topLeftSquares.sort(sorter);
+					topRightSquares.sort(sorter);
+					bottomLeftSquares.sort(sorter);
+					bottomRightSquares.sort(sorter);
+					let freeSquares = [];
+					for (let i = 0; i < bottomLeftSquares.length; i++) {
+						if (checkIfFull(bottomLeftSquares[i].square)) {
+							if (canAttack(pieceType[0])(bottomLeftSquares[i].square)) {
+								freeSquares.push(bottomLeftSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(bottomLeftSquares[i]);
+					}
+					for (let i = 0; i < topLeftSquares.length; i++) {
+						if (checkIfFull(topLeftSquares[i].square)) {
+							if (canAttack(pieceType[0])(topLeftSquares[i].square)) {
+								freeSquares.push(topLeftSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(topLeftSquares[i]);
+					}
+					for (let i = 0; i < bottomRightSquares.length; i++) {
+						if (checkIfFull(bottomRightSquares[i].square)) {
+							if (canAttack(pieceType[0])(bottomRightSquares[i].square)) {
+								freeSquares.push(bottomRightSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(bottomRightSquares[i]);
+					}
+					for (let i = 0; i < topRightSquares.length; i++) {
+						if (checkIfFull(topRightSquares[i].square)) {
+							if (canAttack(pieceType[0])(topRightSquares[i].square)) {
+								freeSquares.push(topRightSquares[i]);
+							}
+							break;
+						}
+						freeSquares.push(topRightSquares[i]);
+					}
+					return freeSquares.map(v => v.square);
+				}
+				let squares = freeSquaresFromDirections(getPossibleSquares(square).map(getSquareDirection(square)));
+				return squares;
+			}
+			function knightMoves(square) {
+				// a knight on g1 can move to f3 h3, e2,
+				let columns = "0abcdefgh";
+				let leftColumnIndex = columns.indexOf(square.name[0]) - 1;
+				let leftColumn = leftColumnIndex>0 ? columns[leftColumnIndex] : "x";
+				
+				let rightColumnIndex = columns.indexOf(square.name[0]) + 1;
+				let rightColumn = rightColumnIndex<=8 ? columns[rightColumnIndex] : "x";
+				let farRightColumnIndex = columns.indexOf(square.name[0]) + 2;
+				let farRightColumn = farRightColumnIndex <= 8 ? columns[farRightColumnIndex] : "x";
+
+				let farLeftColumnIndex = columns.indexOf(square.name[0]) - 2;
+				let farLeftColumn = farLeftColumnIndex > 0 ? columns[farLeftColumnIndex] : "x";
+				let squareRow = Number(square.name[1]);
+
+				let possibleSquares = [
+					leftColumn + (squareRow + 2),
+					leftColumn + (squareRow - 2),
+					rightColumn + (squareRow + 2),
+					rightColumn + (squareRow - 2),
+					farLeftColumn + (squareRow + 1),
+					farLeftColumn + (squareRow - 1),
+					farRightColumn + (squareRow + 1),
+					farRightColumn + (squareRow - 1),
+				]
+				let baseSquares = removeIllogicalSquares(possibleSquares);
+				let normalMovement = baseSquares.filter(x => !checkIfFull(x));
+				let piecesToAttack = baseSquares.filter(canAttack(pieceType[0]));
+				let results = normalMovement.concat(piecesToAttack);
+				return results;
+			}
+			function kingMoves(square) {
+				let columns = "0abcdefgh";
+				let leftColumn = columns[columns.indexOf(square.name[0]) - 1];
+				let rightColumn = columns[columns.indexOf(square.name[0]) + 1];
+				let squareRow = Number(square.name[1]);
+				let baseSquares = removeIllogicalSquares([
+					leftColumn + squareRow,
+					rightColumn + squareRow,
+					leftColumn + (squareRow + 1),
+					rightColumn + (squareRow + 1),
+					leftColumn + (squareRow - 1),
+					rightColumn + (squareRow - 1),
+					square.name[0] + (squareRow + 1),
+					square.name[0] + (squareRow - 1),
+				]);
+				let normalMovement = baseSquares.filter(x => !checkIfFull(x));
+				let piecesToAttack = baseSquares.filter(canAttack(pieceType[0]));
+				let results = normalMovement.concat(piecesToAttack);
+				return results;
+			}
+			function queenMoves(square) {
+				let baseSquares = rookMoves(square).concat(bishopMoves(square));
+				let normalMovement = baseSquares.filter(x => !checkIfFull(x));
+				let piecesToAttack = baseSquares.filter(canAttack(pieceType[0]));
+				let results = normalMovement.concat(piecesToAttack);
+				return results;
+			}
+			function defaultDrag() {
+				// get any square that's empty
+				return cb.squares.filter(x => !checkIfFull(x));
+			}
+			let results = [];
+			switch (pieceType) {
+				case "w_pawn":
+				case "b_pawn":
+					results = pawnMoves(square);
+					break;
+				case "w_rook":
+				case "b_rook":
+					results = rookMoves(square);
+					break;
+				case "w_bishop":
+				case "b_bishop":
+					results = bishopMoves(square);
+					break;
+				case "w_knight":
+				case "b_knight":
+					results = knightMoves(square);
+					break;
+				case "w_king":
+				case "b_king":
+					results = kingMoves(square);
+					break;
+				case "w_queen":
+				case "b_queen":
+					results = queenMoves(square);
+					break;
+			}
+			if (!deep) {
+				return results;
+			}
+			return results.filter(noFutureCheck(pieceType, square));
+		}
+		function isInCheck(side, lboard) {
+			let board = piecesOnBoard;
+			if (lboard != undefined) {
+				board = lboard;
+			}
+			let king = board.find(x => x.type == (side + "_king"));
+			// get every single square covered by every piece, and check if any
+			// of them attack the king
+			let possibleSquares = board.
+				filter(x => canAttack(side)(x.square)).
+				map(x => getSquaresForPiece(x.square, x.type)).
+				flat();
+			let nonDuplicates = [...new Set(possibleSquares.map(x => x.name))];
+			console.log("[INFO] Attacked square search:", nonDuplicates);
+			return nonDuplicates.includes(king.square.name);
+		}
+		function noFutureCheck(pieceType, square) {
+			return function(possibleSquare) {
+				let willBeInCheck = isInCheck(pieceType[0], simulatePiecePosition(square, possibleSquare));
+				if (willBeInCheck) {
+					console.log("[WARN] Illegal move (puts the king in check). Move:", chessNotation(pieceType, possibleSquare))
+				}
+				return !willBeInCheck;
+			}
+		}
+		function initChessboard(chessboard) {
+			function initSquares() {
+
+				let squareNames = [];
+				let columns = ["a", "b", "c", "d", "e", "f", "g", "h"];
+				for (let row = 8; row > 0; row--) {
+					for (let column = 0; column < 8; column++) {
+						squareNames.push(columns[column] + String(row));
+					}
+				}
+				let counter = 0;
+
+				for (let sq_in_four = 0; sq_in_four < 4; sq_in_four++) {
+					let nextSquare = "white";
+					for (let sq = 0; sq < 8; sq++) {
+						let square = {
+							name: squareNames[counter],
+							el: nextSquare == "white" ? $("<div>").addClass("white-square square") : $("<div>").addClass("black-square square")
+						}
+						if (sq !== 8) { nextSquare = nextSquare == "white" ? "black" : "white"; }
+						chessboard.squares.push(square);
+						square.el.appendTo(chessboard.el);
+						counter++;
+					}
+
+					$("<br>").appendTo(chessboard.el);
+					nextSquare = "black";
+					for (let sq = 0; sq < 8; sq++) {
+						let square = {
+							name: squareNames[counter],
+							el: nextSquare == "white" ? $("<div>").addClass("white-square square") : $("<div>").addClass("black-square square")
+						}
+						if (sq !== 8) { nextSquare = nextSquare == "white" ? "black" : "white"; }
+						chessboard.squares.push(square);
+						square.el.appendTo(chessboard.el);
+						counter++;
+					}
+
+					$("<br>").appendTo(chessboard.el);
+				}
+				$("body").append(chessboard.el);
+			}
+			function initPieces() {
+				for (let sq = 0; sq < 64; sq++) {
+					square = chessboard.squares[sq];
+					row = square.name[1];
+					column = square.name[0];
+					piece = "";
+					if (row == "2" || row == "7") {
+						piece = row=="2" ? "w_pawn" : "b_pawn";
+						let x = $("<div>").append($("<img>").attr("src", `./images/${piece}.png`)).addClass("piece " + piece);
+						piecesOnBoard.push({ el: x, type: piece, square: square });
+						x.appendTo(square.el);
+						continue;
+					}
+					else if (row == "1" || row == "8") {
+						switch (column) {
+							case "a":
+								piece = row=="1" ? "w_rook" : "b_rook";
+								break;
+							case "b":
+								piece = row=="1" ? "w_knight" : "b_knight";
+								break;
+							case "c":
+								piece = row=="1" ? "w_bishop" : "b_bishop";
+								break;
+							case "d":
+								piece = row=="1" ? "w_queen" : "b_queen";
+								break;
+							case "e":
+								piece = row=="1" ? "w_king" : "b_king";
+								break;
+							case "f":
+								piece = row=="1" ? "w_bishop" : "b_bishop";
+								break;
+							case "g":
+								piece = row=="1" ? "w_knight" : "b_knight";
+								break;
+							case "h":
+								piece = row=="1" ? "w_rook" : "b_rook";
+								break;
+						}
+						let x = $("<div>").append($("<img>").attr("src", `./images/${piece}.png`)).addClass("piece " + piece)
+						piecesOnBoard.push({ el: x, type: piece, square: square });
+						x.appendTo(square.el);
+					}
+
+				}
+			}
+			initSquares();
+			initPieces();
+		};
+		initChessboard(cb);
+
+		let isMovingPiece = false;
+		let pieceToBeMoved = null;
+		let squaresToMove = [];
+		let squareToBeEmptied = null;
+		let counter = 0;
+		$(".piece").click(function () {
+			let x = $(this);
+			if (x.attr("class").split(" ").pop()[0] != turn) {
+				return;
+			}
+			pieceToBeMoved = {
+				type: x.attr("class").split(" ").pop(),
+				el: x,
+				square: cb.squares.find(s => s.el.is(x.parent()))
+			};
+			squaresToMove = getSquaresForPiece(pieceToBeMoved.square, pieceToBeMoved.type, true);
+			squareToBeEmptied = pieceToBeMoved.square;
+			isMovingPiece = true;
+		});
+		$(".square").click(function () {
+			let sq = cb.squares.find(s => s.el.is($(this)));
+			if (counter < 1) {
+					counter++;
+					return;
+				}
+			if (squaresToMove.includes(sq)) {
+				console.log("[MOVE]", chessNotation(pieceToBeMoved.type, sq))
+				if (checkIfFull(sq)) {
+					$(this).empty();
+					piecesOnBoard = piecesOnBoard.filter(x => x.square != sq);
+				}
+				$(this).append(pieceToBeMoved.el);
+				squareToBeEmptied.el.empty();
+				updatePiecePosition(pieceToBeMoved, sq);
+				
+				// unset variables
+				isMovingPiece = false;
+				pieceToBeMoved = null;
+				squareToBeEmptied = null;
+				counter = 0;
+				turn = turn == "w" ? "b" : "w";
+				if (isInCheck(turn)) {
+					console.log("[INFO]", (turn == "w" ? "White" : "Black"), "king is in check!");
+				}
+			}
+			if (!squaresToMove.includes(sq)) {
+				console.log("[WARN] Squares to move:", squaresToMove, "while this square is:", sq)
+			}
+		});
+	</script>
+</body>
+
+</html>

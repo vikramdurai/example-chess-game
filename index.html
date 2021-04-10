@@ -4,8 +4,8 @@
 <head>
 	<style>
 		.square {
-			height: 60px;
-			width: 60px;
+			height: 12vh;
+			width: 12vh;
 			display: inline-block;
 			margin: 0px;
 			padding: 0px;
@@ -13,19 +13,21 @@
 		}
 
 		.black-square {
-			background-color: rgb(216 99 16);
+			background-color: rgb(76 98 208);
 		}
 
 		.white-square {
-			background-color: rgb(255 186 146);
+			background-color: rgb(146 159 255);
 		}
-
+		.canMoveTo {
+			background-color: rgb(9 125 125);
+		}
 		.piece {
 			position: absolute;
 		}
 		img {
-			height: 55px;
-			width: 55px;
+			height: 11vh;
+			width: 11vh;
 		}
 	</style>
 </head>
@@ -41,7 +43,12 @@
 		let turn = "w";
 		let piecesOnBoard = [];
 		let justJumpedTwoSquares = null;
-		function chessNotation(pieceType, square, capture=false, check=false, checkmate=false) {
+		let gameMoves = {
+			el: $("<div>").attr("id", "moves"),
+			moves: [],
+			whiteMove: "",
+		};
+		function chessNotation(pieceType, originalSquare, square, capture=false, check=false, checkmate=false) {
 			let notationPiece = "";
 			switch (pieceType) {
 				case "w_pawn":
@@ -68,7 +75,15 @@
 					notationPiece = "Q";
 					break;
 			}
-			return notationPiece + (capture? "x" : "") + square.name + (check? "+" : "") + (checkmate? "#" : "");
+			return {
+				notation: notationPiece + (capture? "x" : "") + square.name + (check? "+" : "") + (checkmate? "#" : ""),
+				pieceType: pieceType,
+				originalSquare: originalSquare,
+				square: square,
+				capture: capture,
+				check: check,
+				checkmate: checkmate
+			};
 		}
 		function pieceFromPosition(sqname) {
 			let possible = cb.squares.filter(v => v.name == sqname);
@@ -115,7 +130,12 @@
 			}
 			return square.el.children().length != 0;
 		}
-		function canAttack(side) {
+		function canAttack(side, directPiece=null) {
+			if (directPiece != null) {
+				return function(piece) {
+					return (piece ? side != piece.type[0] : false)
+				}
+			}
 			return function (square) {
 				let piece = pieceFromPosition(square.name);
 				return (piece ? side != piece.type[0] : false);
@@ -515,12 +535,19 @@
 				let rowToGo = Number(square.name[1]) + direction;
 				// are we on the default square?
 				if (rowToGo - direction == openingMoveRow) {
-					// then we can take two steps forward
-					base.push({ square: squareFromPosition(square.name[0] + (rowToGo + direction)), canEnPassant: true });
+					let possibleSquare = squareFromPosition(square.name[0] + (rowToGo + direction));
+					// is the two-step place blocked?
+					if (!checkIfFull(possibleSquare)) {
+						// then we can take two steps forward
+						base.push({ square: possibleSquare, canEnPassant: true });	
+					}
 				}
 				// otherwise just go forward
 				if (rowToGo <= rows.length) {
-					base.push(squareFromPosition(square.name[0] + rowToGo));
+					let possibleSquare = squareFromPosition(square.name[0] + rowToGo);
+					if (!checkIfFull(possibleSquare)) {
+						base.push(squareFromPosition(square.name[0] + rowToGo));
+					}
 				}
 				if (justJumpedTwoSquares != null) {
 					let canAttackSquares = [columns[columns.indexOf(square.name[0]) + 1] + rowToGo,
@@ -631,6 +658,7 @@
 					console.log("[WARN] Unfinished code, tried to call moves for", pieceType, "on", square.name);
 					return [];
 			}
+			console.log(res);
 			return res.filter(x => !isInCheck(pieceType[0], simulatePiecePosition(square, (x.square ? x.square : x))));
 		}
 		function isInCheck(side, lboard) {
@@ -640,16 +668,19 @@
 			// TODO: Figure out Rating
 			let board = lboard || piecesOnBoard;
 			let king = board.find(x => x.type == (side + "_king"));
+			console.log("board king is on:", king.square);
+			let sideFull = (side == "w"? "White" : "Black");
 			// get every single square covered by every piece, and check if any
 			// of them attack the king
-			let possibleAttackers = board.filter(x => canAttack(side)(x.square));
+			let possibleAttackers = board.filter(canAttack(side, 1));
 			for (let i = 0; i < possibleAttackers.length; i++) {
 				let n = squaresCoveredBy(possibleAttackers[i].square, possibleAttackers[i].type);
 				if (n.map(x => x? x.name : "").includes(king.square.name)) {
-					console.log("[INFO]", (side == "w"? "White" : "Black"), "under attack from", possibleAttackers[i].type, "on", possibleAttackers[i].square.name)
+					console.log("[INFO]", sideFull, "king on", king.square, "under attack from", possibleAttackers[i].type, "on", possibleAttackers[i].square.name)
 					return true;
 				}
 			}
+			console.log("White's queen is attacking:", squaresCoveredBy(squareFromPosition("e5"), "w_queen"));
 			return false;
 		}
 		function initChessboard(chessboard) {
@@ -693,6 +724,7 @@
 					$("<br>").appendTo(chessboard.el);
 				}
 				$("body").append(chessboard.el);
+				$("body").append(gameMoves.el);
 			}
 			function initPieces() {
 				for (let sq = 0; sq < 64; sq++) {
@@ -745,7 +777,97 @@
 			initPieces();
 		};
 		initChessboard(cb);
-
+		function playMove(moveName) {
+			let sq = cb.squares.find(s => s.el.is($(this)));
+			if (counter < 1) {
+				counter++;
+				return;
+			}
+			if (squaresToMove.filter(x => (x.square ? x.square : x) == sq).length != 0) {
+				let squareDup = squaresToMove.filter(x => (x.square ? x.square : x) == sq)[0];
+				if ("castling" in squareDup && squareDup.castling) {
+					if (squareDup.castling == "kingside") {
+						console.log("[MOVE] 0-0");
+						$(this).append(pieceToBeMoved.el);
+						let rookNewSquare = squareFromPosition("f" + (turn == "w" ? 1 : 8));
+						let rook = pieceFromPosition("h" + (turn == "w" ? 1 : 8));
+						let rookOldSquare = rook.square.el;
+						rookNewSquare.el.append(rook.el);
+						squareToBeEmptied.el.empty();
+						rookOldSquare.empty();
+						updatePiecePosition(pieceToBeMoved, sq);
+						updatePiecePosition(rook, rookNewSquare);
+					} else if (squareDup.castling == "queenside") {
+						console.log("[MOVE] 0-0-0");
+						$(this).append(pieceToBeMoved.el);
+						let rookNewSquare = squareFromPosition("d" + (turn == "w" ? 1 : 8));
+						let rook = pieceFromPosition("a" + (turn == "w" ? 1 : 8));
+						console.log("[INFO] Rook being moved:", rook, "to new square:", rookNewSquare);
+						let rookOldSquare = rook.square.el;
+						rookNewSquare.el.append(rook.el);
+						squareToBeEmptied.el.empty();
+						rookOldSquare.empty();
+						updatePiecePosition(pieceToBeMoved, sq);
+						updatePiecePosition(rook, rookNewSquare);
+					}
+				} else {
+					if ("canEnPassant" in squareDup || "enPassant" in squareDup) {
+						if (squareDup.canEnPassant) {
+							justJumpedTwoSquares = squareDup;
+						}
+						else if (squareDup.enPassant) {
+							justJumpedTwoSquares.square.el.empty();
+							piecesOnBoard = piecesOnBoard.filter(x => x.square != justJumpedTwoSquares.square);
+							justJumpedTwoSquares = null;
+						}
+					} else if (justJumpedTwoSquares) {
+						console.log("[INFO] Didn't en passant, loses rights to capture:", justJumpedTwoSquares)
+						justJumpedTwoSquares = null;
+					}
+					let isCapture = false;
+					let isCheckmate = false;
+					let isCheck = false;
+					if (checkIfFull(sq)) {
+						$(this).empty();
+						piecesOnBoard = piecesOnBoard.filter(x => x.square != sq);
+						isCapture = true;
+					}
+					$(this).append(pieceToBeMoved.el);
+					squareToBeEmptied.el.empty();
+					updatePiecePosition(pieceToBeMoved, sq);
+					turn = turn == "w" ? "b" : "w";
+					turnFull = turn == "w" ? "White" : "Black";
+					if (isInCheck(turn)) {
+						let allPossibles = piecesOnBoard
+							.filter(x => x.type[0] == turn)
+							.map(x => legalMoves(x.square, x.type))
+							.flat();
+						if (allPossibles.length == 0) {
+							isCheckmate = true;
+						} else {
+							isCheck = true;
+						}
+					}
+					let moveName = chessNotation(pieceToBeMoved.type, sq, isCapture, isCheck, isCheckmate);
+					if (gameMoves.whiteMove !== "") {
+						let moveNum = gameMoves.moves.length+1;
+						let move = `${moveNum}. ${gameMoves.whiteMove} ${moveName}`
+						gameMoves.moves.push(move);
+						gameMoves.whiteMove = "";
+						gameMoves.el.text(gameMoves.moves.join(" "))
+					} else {
+						let moveNum = gameMoves.moves.length+1;
+						gameMoves.el.text(gameMoves.moves.join(" ") + " " + moveNum + ". " + moveName)
+						gameMoves.whiteMove = moveName;
+					}
+					console.log("[MOVE]", moveName);
+				}
+			} else if (!squaresToMove.filter(x => (x.square ? x.square : x) == sq).length != 0) {
+				console.log("[WARN] Squares to move:", squaresToMove, "while this square is:", sq)
+			} else {
+				console.log("Edge case should never happen")
+			}
+		}
 		let isMovingPiece = false;
 		let pieceToBeMoved = null;
 		let squaresToMove = [];
@@ -762,12 +884,14 @@
 				square: cb.squares.find(s => s.el.is(x.parent()))
 			};
 			squaresToMove = legalMoves(pieceToBeMoved.square, pieceToBeMoved.type);
+			console.log("Squares to move:", squaresToMove);
 			squareToBeEmptied = pieceToBeMoved.square;
 			isMovingPiece = true;
 			console.log("[INFO] Selected piece:", pieceToBeMoved);
-			// for (let i = 0; i < squaresToMove.length; i++) {
-			// 	squaresToMove[i].el.append($())
-			// }
+			for (let i = 0; i < squaresToMove.length; i++) {
+				let x = (squaresToMove[i].square? squaresToMove[i].square.el : squaresToMove[i].el);
+				x.addClass("canMoveTo")
+			}
 		});
 		$(".square").click(function () {
 			let sq = cb.squares.find(s => s.el.is($(this)));
@@ -840,7 +964,19 @@
 							isCheck = true;
 						}
 					}
-					console.log("[MOVE]", chessNotation(pieceToBeMoved.type, sq, isCapture, isCheck, isCheckmate));
+					let moveName = chessNotation(pieceToBeMoved.type, pieceToBeMoved.square, sq, isCapture, isCheck, isCheckmate);
+					if (gameMoves.whiteMove !== "") {
+						let moveNum = gameMoves.moves.length+1;
+						let move = `${moveNum}. ${gameMoves.whiteMove.notation} ${moveName.notation}`
+						gameMoves.moves.push(move);
+						gameMoves.whiteMove = "";
+						gameMoves.el.text(gameMoves.moves.join(" "))
+					} else {
+						let moveNum = gameMoves.moves.length+1;
+						gameMoves.el.text(gameMoves.moves.join(" ") + " " + moveNum + ". " + moveName.notation)
+						gameMoves.whiteMove = moveName;
+					}
+					console.log("[MOVE]", moveName.notation);
 				}
 			} else if (!squaresToMove.filter(x => (x.square ? x.square : x) == sq).length != 0) {
 				console.log("[WARN] Squares to move:", squaresToMove, "while this square is:", sq)
@@ -851,7 +987,9 @@
 			isMovingPiece = false;
 			pieceToBeMoved = null;
 			squareToBeEmptied = null;
+			squaresToMove = null;
 			counter = 0;
+			$(".canMoveTo").removeClass("canMoveTo");
 		});
 	</script>
 </body>
